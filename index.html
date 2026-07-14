@@ -11,6 +11,7 @@
     .card { background: white; border-radius: 16px; box-shadow: 0 4px 24px rgba(92, 124, 250, 0.08); padding: 24px; margin-bottom: 20px; }
     .btn-primary { background: linear-gradient(135deg, #5C7CFA 0%, #4C6EF5 100%); color: white; border: none; border-radius: 12px; padding: 16px 32px; font-size: 18px; font-weight: 600; cursor: pointer; width: 100%; margin-bottom: 10px; }
     .btn-secondary { background: white; color: #5C7CFA; border: 2px solid #5C7CFA; border-radius: 12px; padding: 16px 32px; font-size: 18px; font-weight: 600; cursor: pointer; width: 100%; }
+    .btn-primary:disabled, .btn-secondary:disabled { opacity: 0.5; cursor: not-allowed; }
     .header { display: flex; align-items: center; gap: 16px; margin-bottom: 20px; }
     .back-btn { background: none; border: none; color: #5C7CFA; font-size: 20px; cursor: pointer; }
     .title { font-size: 24px; font-weight: 600; color: #334155; }
@@ -50,10 +51,30 @@
     .text-gray { color: #64748B; }
     .text-light { color: #94A3B8; }
     .font-bold { font-weight: 600; }
+    .toast { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); background: rgba(0,0,0,0.8); color: white; padding: 16px 24px; border-radius: 12px; font-size: 14px; z-index: 2000; display: none; }
+    .toast.show { display: block; animation: fadeIn 0.3s; }
+    @keyframes fadeIn { from { opacity: 0; transform: translate(-50%, -40%); } to { opacity: 1; transform: translate(-50%, -50%); } }
+    .loading-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(255,255,255,0.9); display: flex; flex-direction: column; align-items: center; justify-content: center; z-index: 1500; }
+    .loading-text { font-size: 16px; color: #64748B; margin-top: 16px; }
+    .progress-bar { width: 200px; height: 6px; background: #E2E8F0; border-radius: 3px; overflow: hidden; margin-top: 16px; }
+    .progress-fill { height: 100%; background: linear-gradient(90deg, #5C7CFA, #4C6EF5); border-radius: 3px; transition: width 0.5s ease; }
+    .statement-card { background: white; border-radius: 12px; padding: 20px; margin-bottom: 16px; border-left: 4px solid #5C7CFA; }
+    .statement-card.partner { border-left-color: #F59E0B; }
+    .speech-bubble { position: relative; background: #EEF2FF; border-radius: 12px; padding: 16px; margin-top: 12px; }
+    .speech-bubble::before { content: ''; position: absolute; top: -8px; left: 20px; width: 16px; height: 16px; background: #EEF2FF; transform: rotate(45deg); }
+    .speech-bubble.partner { background: #FEF3C7; }
+    .speech-bubble.partner::before { background: #FEF3C7; }
+    .emoji-select-area { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 16px; }
+    .emoji-option { width: 64px; height: 64px; border-radius: 12px; border: 2px solid #E2E8F0; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: all 0.2s; }
+    .emoji-option:hover { border-color: #5C7CFA; }
+    .emoji-option.selected { border-color: #5C7CFA; background: #EEF2FF; }
+    .emoji-option img { width: 50px; height: 50px; object-fit: contain; }
+    .emoji-label { font-size: 12px; text-align: center; margin-top: 4px; color: #64748B; }
   </style>
 </head>
 <body>
   <div id="app"></div>
+  <div id="toast" class="toast"></div>
 
   <script>
     const AMUX_BASE_URL = 'https://api.amux.ai'
@@ -98,22 +119,73 @@
 
     const COMMON_NEEDS = ['希望被理解', '希望被尊重', '希望被及时回应', '希望得到关心', '希望减少情绪化争吵', '希望先冷静再沟通', '希望对方能听完解释', '希望得到认可']
 
-    async function callAIModel(prompt, images = []) {
+    function showToast(msg) {
+      const toast = document.getElementById('toast')
+      toast.textContent = msg
+      toast.classList.add('show')
+      setTimeout(() => toast.classList.remove('show'), 2000)
+    }
+
+    function showLoading(text, progress = 0) {
+      const overlay = document.createElement('div')
+      overlay.className = 'loading-overlay'
+      overlay.id = 'loading-overlay'
+      overlay.innerHTML = `
+        <div class="loading-spinner"></div>
+        <div class="loading-text">${text}</div>
+        <div class="progress-bar"><div class="progress-fill" style="width: ${progress}%;"></div></div>
+      `
+      document.body.appendChild(overlay)
+      return overlay
+    }
+
+    function updateLoading(text, progress = null) {
+      const overlay = document.getElementById('loading-overlay')
+      if (overlay) {
+        const textEl = overlay.querySelector('.loading-text')
+        if (textEl) textEl.textContent = text
+        if (progress !== null) {
+          const fill = overlay.querySelector('.progress-fill')
+          if (fill) fill.style.width = `${progress}%`
+        }
+      }
+    }
+
+    function hideLoading() {
+      const overlay = document.getElementById('loading-overlay')
+      if (overlay) overlay.remove()
+    }
+
+    async function callAIModel(prompt, images = [], modelName = 'gpt-image-2') {
       const messages = [{ role: 'user', content: [{ type: 'text', text: prompt }] }]
       if (images.length > 0) {
         images.forEach(img => messages[0].content.push({ type: 'image_url', image_url: { url: `data:image/png;base64,${img}` } }))
       }
       try {
+        console.log('AI API call started, model:', modelName, 'images:', images.length)
         const res = await fetch(`${AMUX_BASE_URL}/v1/chat/completions`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${AMUX_API_KEY}` },
-          body: JSON.stringify({ model: 'gpt-image-2', messages, temperature: 0.7, max_tokens: 2000 })
+          body: JSON.stringify({ 
+            model: modelName, 
+            messages, 
+            temperature: 0.7, 
+            max_tokens: 2000 
+          }),
+          timeout: 60000
         })
         const data = await res.json()
-        if (data.error) throw new Error(data.error.message || data.error)
-        return data.choices?.[0]?.message?.content || ''
+        console.log('AI API response:', data)
+        if (data.error) {
+          console.error('AI Error:', data.error)
+          throw new Error(data.error.message || JSON.stringify(data.error))
+        }
+        const content = data.choices?.[0]?.message?.content || ''
+        console.log('AI content length:', content.length)
+        return content
       } catch (e) {
         console.error('AI call failed:', e)
+        showToast('AI分析失败，正在使用示例数据')
         return ''
       }
     }
@@ -121,12 +193,14 @@
     function parseJSON(str) {
       try {
         const match = str.match(/\{[\s\S]*\}/)
-        return match ? JSON.parse(match[0]) : {}
-      } catch { return {} }
-    }
-
-    function render(template, data) {
-      return template.replace(/\{\{(\w+)\}\}/g, (_, key) => data[key] || '')
+        if (match) {
+          return JSON.parse(match[0])
+        }
+        return {}
+      } catch (e) {
+        console.error('JSON parse failed:', e)
+        return {}
+      }
     }
 
     const routes = {
@@ -172,7 +246,7 @@
             <div style="display: flex; flex-direction: column; gap: 12px;">
               <div style="display: flex; align-items: flex-start; gap: 12px;">
                 <div style="width: 32px; height: 32px; background: linear-gradient(135deg, #5C7CFA, #4C6EF5); color: white; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 14px; font-weight: 600; flex-shrink: 0;">1</div>
-                <div><h3 style="font-size: 14px; font-weight: 600; color: #334155;">观察</h3><p style="font-size: 12px; color: #94A3B8;">上传聊天截图，识别争执中的关键表达</p></div>
+                <div><h3 style="font-size: 14px; font-weight: 600; color: #334155;">观察</h3><p style="font-size: 12px; color: #94A3B8;">上传聊天截图，AI识别争执中的关键表达</p></div>
               </div>
               <div style="display: flex; align-items: flex-start; gap: 12px;">
                 <div style="width: 32px; height: 32px; background: linear-gradient(135deg, #5C7CFA, #4C6EF5); color: white; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 14px; font-weight: 600; flex-shrink: 0;">2</div>
@@ -292,7 +366,6 @@
       let currentTab = 'image'
       let screenshots = []
       let chatText = ''
-      let isLoading = false
 
       function render() {
         container.innerHTML = `
@@ -330,8 +403,8 @@
               `}
             </div>
             <p style="text-align: center; font-size: 12px; color: #94A3B8; margin-bottom: 20px;">🔒 截图仅用于本次分析，请确认你愿意上传。</p>
-            <button class="btn-primary" onclick="nextStep()" ${!canProceed() ? 'style="opacity: 0.5; cursor: not-allowed;"' : ''}>
-              ${isLoading ? '正在识别……' : '下一步：识别并确认情绪'}
+            <button class="btn-primary" onclick="nextStep()" ${!canProceed() ? 'disabled' : ''}>
+              下一步：AI识别并确认情绪
             </button>
             <input type="file" id="file-input" accept="image/*" multiple style="display: none;" onchange="handleFileSelect(event)">
           </div>
@@ -346,6 +419,10 @@
         const files = Array.from(e.target.files)
         e.target.value = ''
         files.forEach(file => {
+          if (file.size > 5 * 1024 * 1024) {
+            showToast('图片超过5MB，请选择更小的图片')
+            return
+          }
           const reader = new FileReader()
           reader.onload = (ev) => {
             screenshots.push(ev.target.result)
@@ -356,6 +433,7 @@
       }
 
       function mockAnalysis() {
+        showToast('AI暂时无法连接，使用示例数据继续')
         store.set('violentStatements', [
           { id: 'stmt_0', speaker: 'user', text: '你怎么这么忙，消息从来不回', emotion: '愤怒' },
           { id: 'stmt_1', speaker: 'partner', text: '我忙的时候你能不能别烦我', emotion: '烦躁' },
@@ -365,23 +443,61 @@
       }
 
       async function nextStep() {
-        if (!canProceed() || isLoading) return
-        isLoading = true
-        render()
+        if (!canProceed()) {
+          showToast(currentTab === 'image' ? '请至少上传一张聊天截图' : '请输入聊天内容')
+          return
+        }
+
+        showLoading('AI正在分析，请稍候...', 10)
+
         try {
           let result
           if (currentTab === 'image') {
+            updateLoading('正在处理图片...', 20)
             const images = screenshots.map(s => s.split(',')[1])
-            result = await callAIModel('请分析以下聊天截图，识别3句情绪最强烈的语句，用JSON格式返回emotional_statements数组（包含statement、emotion、speaker）', images)
+            store.set('screenshots', screenshots)
+            
+            updateLoading('AI正在识别图片内容...', 50)
+            const prompt = `请分析以下聊天截图，识别其中的情绪化语句。要求：1. 识别图片中的聊天文字内容；2. 根据聊天界面判断说话者：左边的消息默认为"伴侣"说的，右边的消息默认为"用户"说的；3. 只选取3句情绪最强烈的语句（愤怒、委屈、冷漠、讽刺、指责等）；4. 为每条情绪化语句标注情绪类型；5. 用JSON格式返回结果，包含emotional_statements数组，每个元素包含statement、emotion、speaker字段（speaker值为"user"或"partner"）`
+            result = await callAIModel(prompt, images)
           } else {
-            result = await callAIModel(`请分析以下聊天内容，识别3句情绪最强烈的语句，用JSON格式返回emotional_statements数组（包含statement、emotion、speaker）。聊天内容：${chatText}`)
+            updateLoading('AI正在分析聊天内容...', 50)
+            store.set('chatText', chatText)
+            const prompt = `请分析以下聊天内容，识别其中的情绪化语句。要求：1. 根据发言者标识判断说话者："我："或"用户："开头的是用户说的，"ta："或"伴侣："开头的是伴侣说的；2. 只选取3句情绪最强烈的语句（愤怒、委屈、冷漠、讽刺、指责等）；3. 为每条情绪化语句标注情绪类型和说话者；4. 用JSON格式返回结果，包含emotional_statements数组，每个元素包含statement、emotion、speaker字段（speaker值为"user"或"partner"）。聊天内容：${chatText}`
+            result = await callAIModel(prompt, [], 'gpt-5.4-mini')
           }
+
+          updateLoading('正在解析结果...', 80)
+
+          console.log('AI Result:', result)
           const data = parseJSON(result)
           const statements = data.emotional_statements || []
-          if (statements.length === 0) { mockAnalysis(); return }
-          store.set('violentStatements', statements.map((s, i) => ({ ...s, id: `stmt_${i}`, text: s.statement, speaker: s.speaker || 'user' })))
-          navigate('/emotion-confirm')
-        } catch {
+
+          if (statements.length === 0) {
+            console.log('No statements found, using mock data')
+            mockAnalysis()
+            return
+          }
+
+          const indexedStatements = statements.map((s, i) => ({ 
+            ...s, 
+            id: `stmt_${i}`, 
+            text: s.statement || s.text || '', 
+            speaker: s.speaker || 'user' 
+          }))
+          
+          console.log('Indexed statements:', indexedStatements)
+          store.set('violentStatements', indexedStatements)
+          
+          updateLoading('完成！', 100)
+          setTimeout(() => {
+            hideLoading()
+            navigate('/emotion-confirm')
+          }, 500)
+
+        } catch (e) {
+          console.error('Analysis failed:', e)
+          hideLoading()
           mockAnalysis()
         }
       }
@@ -397,7 +513,6 @@
       let selectedSelfEmojis = []
       let selectedPartnerEmojis = []
       let emotionAnswers = store.get('emotionAnswers') || []
-      let candidateEmojis = MEMES_LIST.slice(0, 9)
 
       function render() {
         const stmt = statements[currentIndex]
@@ -418,45 +533,66 @@
                 <div style="height: 100%; background: linear-gradient(90deg, #5C7CFA, #4C6EF5); border-radius: 3px; width: ${((currentIndex + 1) / statements.length) * 100}%;"></div>
               </div>
             </div>
-            <div class="card">
+            <div class="statement-card ${stmt.speaker === 'partner' ? 'partner' : ''}">
               <span style="display: inline-block; padding: 6px 16px; border-radius: 16px; font-size: 12px; font-weight: 500; margin-bottom: 12px; ${stmt.speaker === 'user' ? 'background: #EEF2FF; color: #5C7CFA;' : 'background: #FEF3C7; color: #F59E0B;'}">
                 ${stmt.speaker === 'user' ? '你说的话' : '伴侣说的话'}
               </span>
-              <p style="font-size: 18px; color: #334155;">"${stmt.text}"</p>
+              <div class="speech-bubble ${stmt.speaker === 'partner' ? 'partner' : ''}">
+                <p style="font-size: 18px; color: #334155; margin: 0;">"${stmt.text}"</p>
+              </div>
+              ${stmt.emotion ? `<p style="font-size: 12px; color: #94A3B8; margin-top: 8px;">AI识别情绪：${stmt.emotion}</p>` : ''}
             </div>
             <div class="card">
               <p style="font-size: 14px; font-weight: 500; color: #334155; margin-bottom: 12px;">你说出这句话时，可能是什么感受？</p>
-              <div style="border: 2px dashed #CBD5E1; border-radius: 8px; padding: 16px; min-height: 60px;" onclick="showPicker('self')">
-                ${selectedSelfEmojis.length === 0 ? '<span style="color: #94A3B8; font-size: 14px;">点击选择表情包</span>' : `
-                  <div style="display: flex; flex-wrap: gap: 8px;">
+              <div style="border: 2px dashed #CBD5E1; border-radius: 8px; padding: 16px; min-height: 80px;">
+                ${selectedSelfEmojis.length === 0 ? '<span style="color: #94A3B8; font-size: 14px;">点击下方表情包选择</span>' : `
+                  <div style="display: flex; flex-wrap: gap: 12px;">
                     ${selectedSelfEmojis.map(e => `
-                      <div style="position: relative; width: 48px; height: 48px; margin-right: 8px;">
-                        <img src="memes/${e.fileName}" style="width: 100%; height: 100%; object-fit: contain;">
-                        <button onclick="removeSelfEmoji('${e.id}')" style="position: absolute; top: -6px; right: -6px; width: 20px; height: 20px; background: #EF4444; color: white; border: none; border-radius: 50%; font-size: 12px;">×</button>
+                      <div style="position: relative;">
+                        <div class="emoji-option selected" onclick="removeSelfEmoji('${e.id}')"><img src="memes/${e.fileName}"></div>
+                        <span class="emoji-label">${e.label}</span>
+                        <button onclick="removeSelfEmoji('${e.id}')" style="position: absolute; top: -8px; right: -8px; width: 20px; height: 20px; background: #EF4444; color: white; border: none; border-radius: 50%; font-size: 12px;">×</button>
                       </div>
                     `).join('')}
                   </div>
                 `}
+              </div>
+              <div class="emoji-select-area">
+                ${MEMES_LIST.map(e => `
+                  <div class="emoji-option ${selectedSelfEmojis.find(s => s.id === e.id) ? 'selected' : ''}" onclick="selectEmoji('${e.id}', 'self', '${e.fileName}', '${e.label}')">
+                    <img src="memes/${e.fileName}">
+                    <span class="emoji-label">${e.label}</span>
+                  </div>
+                `).join('')}
               </div>
             </div>
             <div class="card">
               <p style="font-size: 14px; font-weight: 500; color: #334155; margin-bottom: 12px;">你猜伴侣听到这句话时，可能是什么感受？</p>
-              <div style="border: 2px dashed #CBD5E1; border-radius: 8px; padding: 16px; min-height: 60px;" onclick="showPicker('partner')">
-                ${selectedPartnerEmojis.length === 0 ? '<span style="color: #94A3B8; font-size: 14px;">点击选择表情包</span>' : `
-                  <div style="display: flex; flex-wrap: gap: 8px;">
+              <div style="border: 2px dashed #CBD5E1; border-radius: 8px; padding: 16px; min-height: 80px;">
+                ${selectedPartnerEmojis.length === 0 ? '<span style="color: #94A3B8; font-size: 14px;">点击下方表情包选择</span>' : `
+                  <div style="display: flex; flex-wrap: gap: 12px;">
                     ${selectedPartnerEmojis.map(e => `
-                      <div style="position: relative; width: 48px; height: 48px; margin-right: 8px;">
-                        <img src="memes/${e.fileName}" style="width: 100%; height: 100%; object-fit: contain;">
-                        <button onclick="removePartnerEmoji('${e.id}')" style="position: absolute; top: -6px; right: -6px; width: 20px; height: 20px; background: #EF4444; color: white; border: none; border-radius: 50%; font-size: 12px;">×</button>
+                      <div style="position: relative;">
+                        <div class="emoji-option selected" onclick="removePartnerEmoji('${e.id}')"><img src="memes/${e.fileName}"></div>
+                        <span class="emoji-label">${e.label}</span>
+                        <button onclick="removePartnerEmoji('${e.id}')" style="position: absolute; top: -8px; right: -8px; width: 20px; height: 20px; background: #EF4444; color: white; border: none; border-radius: 50%; font-size: 12px;">×</button>
                       </div>
                     `).join('')}
                   </div>
                 `}
               </div>
+              <div class="emoji-select-area">
+                ${MEMES_LIST.map(e => `
+                  <div class="emoji-option ${selectedPartnerEmojis.find(s => s.id === e.id) ? 'selected' : ''}" onclick="selectEmoji('${e.id}', 'partner', '${e.fileName}', '${e.label}')">
+                    <img src="memes/${e.fileName}">
+                    <span class="emoji-label">${e.label}</span>
+                  </div>
+                `).join('')}
+              </div>
             </div>
             <div style="display: flex; gap: 16px;">
-              <button class="btn-secondary" ${currentIndex === 0 ? 'style="opacity: 0.5;"' : ''} onclick="prevStatement()">上一句</button>
-              <button class="btn-primary" ${!canProceed() ? 'style="opacity: 0.5;"' : ''} onclick="nextStatement()">
+              <button class="btn-secondary" ${currentIndex === 0 ? 'disabled' : ''} onclick="prevStatement()">上一句</button>
+              <button class="btn-primary" ${!canProceed() ? 'disabled' : ''} onclick="nextStatement()">
                 ${currentIndex === statements.length - 1 ? '查看情绪报告' : '下一句'}
               </button>
             </div>
@@ -466,22 +602,6 @@
 
       function canProceed() {
         return selectedSelfEmojis.length > 0 && selectedPartnerEmojis.length > 0
-      }
-
-      function showPicker(type) {
-        const picker = document.createElement('div')
-        picker.className = 'picker-modal'
-        picker.innerHTML = `
-          <div class="picker-content" onclick="event.stopPropagation()">
-            <p style="text-align: center; color: #64748B; margin-bottom: 16px;">${type === 'self' ? '选择你的感受' : '选择伴侣的感受'}</p>
-            <div class="picker-grid">
-              ${candidateEmojis.map(e => `<div class="emoji-item" onclick="selectEmoji('${e.id}', '${type}', '${e.fileName}', '${e.label}'); document.querySelector('.picker-modal').remove()"><img src="memes/${e.fileName}"></div>`).join('')}
-            </div>
-            <button class="btn-secondary" style="margin-top: 20px;" onclick="document.querySelector('.picker-modal').remove()">关闭</button>
-          </div>
-        `
-        picker.onclick = () => picker.remove()
-        document.body.appendChild(picker)
       }
 
       window.selectEmoji = function(id, type, fileName, label) {
@@ -524,14 +644,21 @@
         if (currentIndex === 0) return
         saveAnswer()
         currentIndex--
+        selectedSelfEmojis = []
+        selectedPartnerEmojis = []
         render()
       }
 
       function nextStatement() {
-        if (!canProceed()) return
+        if (!canProceed()) {
+          showToast('请选择你的感受和伴侣的感受')
+          return
+        }
         saveAnswer()
         if (currentIndex < statements.length - 1) {
           currentIndex++
+          selectedSelfEmojis = []
+          selectedPartnerEmojis = []
           render()
         } else {
           navigate('/emotion-report')
@@ -563,16 +690,22 @@
         store.set('userEmotionDistribution', userEmotionDistribution)
         store.set('partnerEmotionUserGuess', partnerEmotionUserGuess)
 
+        showLoading('AI正在分析伴侣情绪...')
+
         try {
-          const result = await callAIModel(`根据以下情绪化语句推测伴侣情绪，用JSON返回emotions数组（包含emotion、reason、percent）：${stmts.map((s, i) => `${i+1}. "${s.text}" (${s.emotion})`).join('\n')}`)
+          const prompt = `根据以下聊天中的情绪化语句，请推测对方（伴侣）可能的情绪。要求：1. 分析每条情绪化语句背后对方的感受；2. 列出4种最可能的情绪，并为每种情绪给出0-100的概率百分比（percent）；3. 额外列出3种"其他"可能的情绪，同样给出概率百分比；4. 用JSON格式返回，包含emotions数组，每个元素包含emotion、reason和percent字段。情绪化语句：${stmts.map((s, i) => `${i+1}. "${s.text}" (情绪: ${s.emotion})`).join('\n')}`
+          const result = await callAIModel(prompt, [], 'gpt-5.4-mini')
           const data = parseJSON(result)
           const aiEmotions = data.emotions || []
           store.set('partnerEmotionAIGuess', aiEmotions)
           const top = aiEmotions.slice(0, 3)
           if (top.length > 0) aiEmotionSummary = `总结本次对话，AI认为伴侣的感受总体是：${top.map(e => `${e.emotion}（${e.percent}%）`).join('、')}`
-        } catch {
+        } catch (e) {
+          console.error('AI emotion analysis failed:', e)
           aiEmotionSummary = 'AI分析暂不可用，请根据自己的理解继续'
         }
+
+        hideLoading()
         render()
       }
 
@@ -615,7 +748,7 @@
               </div>
               ${aiEmotionSummary ? `
                 <div style="margin-top: 16px; padding-top: 16px; border-top: 1px solid #E2E8F0;">
-                  <p style="font-size: 12px; color: #94A3B8; margin-bottom: 8px;">AI综合分析</p>
+                  <p style="font-size: 12px; color: #94A3B8; margin-bottom: 8px;">🤖 AI综合分析</p>
                   <p style="font-size: 14px; color: #64748B;">${aiEmotionSummary}</p>
                 </div>
               ` : ''}
@@ -633,14 +766,19 @@
 
       async function loadNeeds() {
         const stmts = store.get('violentStatements') || []
+        showLoading('AI正在分析你的需求...')
+
         try {
-          const result = await callAIModel(`根据以下情绪化语句分析用户的4个核心需求，用JSON返回needs数组（包含text字段）：${stmts.map((s, i) => `${i+1}. "${s.text}"`).join('\n')}`)
+          const prompt = `根据以下情侣聊天中的情绪化语句，请分析用户（说这些话的一方）在争吵中的真实需求。要求：1. 深入理解争吵情境，找出用户争吵背后真正想要的东西；2. 列出4个最贴合情境的核心需求，每个需求用一句话表达（20字以内），要具体且有针对性；3. 需求之间要有明显差异，覆盖不同层面（情感、关注、尊重、沟通等）；4. 用JSON格式返回，包含needs数组，每个元素只包含text字段。情绪化语句：${stmts.map((s, i) => `${i+1}. "${s.text}"`).join('\n')}`
+          const result = await callAIModel(prompt, [], 'gpt-5.4-mini')
           const data = parseJSON(result)
           const aiNeeds = data.needs || []
           needs = aiNeeds.map((n, i) => ({ id: `need_${i}`, text: n.text || n, selected: false }))
         } catch {
           needs = COMMON_NEEDS.slice(0, 4).map((n, i) => ({ id: `need_${i}`, text: n, selected: false }))
         }
+
+        hideLoading()
         render()
       }
 
@@ -662,7 +800,7 @@
               `).join('')}
             </div>
             <p style="text-align: center; font-size: 14px; color: #94A3B8; margin: 20px 0;">已选择 ${selected.length} 项需求</p>
-            <button class="btn-primary" ${selected.length === 0 ? 'style="opacity: 0.5;"' : ''} onclick="nextStep()">生成沟通报告</button>
+            <button class="btn-primary" ${selected.length === 0 ? 'disabled' : ''} onclick="nextStep()">生成沟通报告</button>
           </div>
         `
       }
@@ -693,11 +831,14 @@
         const userGuesses = store.get('partnerEmotionUserGuess') || []
         const selectedNeeds = store.get('selectedNeeds') || []
 
+        showLoading('AI正在生成沟通报告...')
+
         try {
-          const prompt = `基于以下情侣争吵情境生成NVC沟通报告，用JSON格式输出（userEmotions, partnerEmotions, needAnalysis, betterExpressions, otherSuggestions）。needAnalysis和otherSuggestions用【】标记重点。不要用"他/她"，用"ta"。聊天：${stmts.map(s => `${s.speaker === 'user' ? '你' : '伴侣'}：${s.text}`).join('\n')}。你的情绪：${userEmotions.map(e => `${e.emotion}(${e.percent}%)`).join('、')}。你猜伴侣情绪：${userGuesses.map(e => `${e.emotion}(${e.percent}%)`).join('、')}。AI分析伴侣情绪：${partnerEmotions.map(e => `${e.emotion}(${e.percent}%)`).join('、')}。你的需求：${selectedNeeds.map(n => n.text).join('、')}`
-          const result = await callAIModel(prompt)
+          const prompt = `请基于以下情侣争吵情境，生成一份精简的NVC（非暴力沟通）沟通报告。要求：1. 内容简洁精炼，不要长篇大论；2. 在needAnalysis和otherSuggestions字段中，用【】标记出重点词汇或关键信息（每个段落标记1-3个重点即可）；3. 所有内容中不要使用性别代词"他"或"她"来指代伴侣，统一使用中性代词"ta"；4. 用JSON格式输出，包含以下5个字段：userEmotions（你的情绪，用3-5个关键词总结）、partnerEmotions（伴侣的情绪，用3-5个关键词总结）、needAnalysis（情绪与需求分析，3-5句话说明情绪与需求的关系）、betterExpressions（更好的表达方式，给出3句原句的改良建议，格式为"原句→改良后"，用换行分隔）、otherSuggestions（其他建议，针对本次吵架给出2-3条针对性建议）。聊天内容：${stmts.map(s => `${s.speaker === 'user' ? '你' : '伴侣'}：${s.text}`).join('\n')}。你的情绪：${userEmotions.map(e => `${e.emotion}(${e.percent}%)`).join('、')}。你猜伴侣情绪：${userGuesses.map(e => `${e.emotion}(${e.percent}%)`).join('、')}。AI分析伴侣情绪：${partnerEmotions.map(e => `${e.emotion}(${e.percent}%)`).join('、')}。你的需求：${selectedNeeds.map(n => n.text).join('、')}`
+          const result = await callAIModel(prompt, [], 'gpt-5.4-mini')
           report = parseJSON(result)
-        } catch {
+        } catch (e) {
+          console.error('Report generation failed:', e)
           report = {
             userEmotions: '愤怒、委屈、失望',
             partnerEmotions: '烦躁、无奈、疲惫',
@@ -706,6 +847,8 @@
             otherSuggestions: '在沟通中，试着【先倾听】对方的感受，而不是急于反驳。当情绪强烈时，可以约定一个【冷静时间】，等双方都平静下来再继续对话。'
           }
         }
+
+        hideLoading()
         render()
       }
 
@@ -741,7 +884,7 @@
             </div>
             <div class="card">
               <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 12px;"><span style="font-size: 24px;">🎯</span><span style="font-weight: 600; color: #334155;">需求分析</span></div>
-              <p style="font-size: 14px; color: #64748B; line-height: 1.7;" dangerouslySetInnerHTML="${parseHighlight(report.needAnalysis)}"></p>
+              <p style="font-size: 14px; color: #64748B; line-height: 1.7;" id="need-analysis"></p>
             </div>
             <div class="card">
               <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 12px;"><span style="font-size: 24px;">💬</span><span style="font-weight: 600; color: #334155;">更好的表达</span></div>
@@ -749,14 +892,16 @@
             </div>
             <div class="card">
               <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 12px;"><span style="font-size: 24px;">💡</span><span style="font-weight: 600; color: #334155;">其他建议</span></div>
-              <p style="font-size: 14px; color: #64748B; line-height: 1.7;" dangerouslySetInnerHTML="${parseHighlight(report.otherSuggestions)}"></p>
+              <p style="font-size: 14px; color: #64748B; line-height: 1.7;" id="other-suggestions"></p>
             </div>
             <div style="position: fixed; bottom: 0; left: 0; right: 0; display: flex; gap: 16px; padding: 16px; background: white; box-shadow: 0 -4px 24px rgba(0,0,0,0.08);">
-              <button class="btn-primary" onclick="alert('报告已生成，可截图分享')">分享报告</button>
+              <button class="btn-primary" onclick="showToast('报告已生成，可截图分享')">分享报告</button>
               <button class="btn-secondary" onclick="store.clear(); navigate('/')">重新开始</button>
             </div>
           </div>
-        `.replace(/dangerouslySetInnerHTML/g, 'innerHTML')
+        `
+        document.getElementById('need-analysis').innerHTML = parseHighlight(report.needAnalysis)
+        document.getElementById('other-suggestions').innerHTML = parseHighlight(report.otherSuggestions)
       }
 
       generateReport()
